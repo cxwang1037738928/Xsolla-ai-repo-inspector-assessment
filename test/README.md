@@ -5,7 +5,7 @@ the **intended** behaviour, so an open issue's test fails and a fixed issue's
 test passes. The file header comments carry the diagnosis and the required fix;
 this page is the index.
 
-Issues 1, 2 and 10 are fixed and green. Everything else is diagnosed and
+Issues 1, 2, 5 and 10 are fixed and green. Everything else is diagnosed and
 reproduced but deliberately left open — the failing tests are the spec.
 
 Shared fixtures live in [`helpers/repo.ts`](helpers/repo.ts) (isolated temp Git
@@ -20,8 +20,8 @@ between the declared schema and the handler).
 | 1 | fixed | `issue-01-mcp-argument-binding` | Schema declared `repo_path`, handler read `repoPath` → path never bound, git ran in the server's own cwd, caller got `# Review Report: undefined` and no error | `src/mcp-server.ts:13,19` |
 | 2 | fixed | `issue-02-validation-failure-is-data` | Non-zero exit *rejected* instead of reporting `status: "failed"` → stack trace, no report file. The declared `"failed"` status was unreachable | `src/validation.ts:7-10` |
 | 3 | open | `issue-03-non-git-path` | git walks up the tree, so a nested non-repo path silently reports the **enclosing** repo's diff under the requested path | `src/git.ts:11-23` |
-| 4 | open | `issue-04-validation-output-size` | `exec`'s default 1 MB `maxBuffer` → any verbose test suite dies with `ERR_CHILD_PROCESS_STDIO_MAXBUFFER` | `src/validation.ts:6` |
-| 5 | open | `issue-05-validation-timeout` | No timeout → a hanging command blocks the MCP call forever with no cancel path | `src/validation.ts:6` |
+| 4 | closed | — | Measured and downgraded, see *Known limitations* below | — |
+| 5 | fixed | `issue-05-validation-timeout` | No timeout → a hanging command blocked the MCP call forever with no cancel path | `src/validation.ts:6` |
 | 6 | open | `issue-06-base-ref-default` | Base ref hard-coded to `"main"` → breaks on `master` repos and shallow CI checkouts | `src/git.ts:12` |
 | 7 | open | `issue-07-base-ref-argument-injection` | Ref interpolated into argv with no `--` guard → git parses a dash-prefixed ref as a **flag**; `--output=x` writes an arbitrary file | `src/git.ts:13` |
 | 8 | open | `issue-08-report-injection` | Untrusted text interpolated unescaped → validation output can close the code fence and forge whole sections (a fabricated clean `npm audit`); an injection channel into a model's context | `src/report.ts` |
@@ -42,6 +42,12 @@ between the declared schema and the handler).
   merged stdout+stderr, and an `exitCode`. Rejection now means only "could not
   run the command". The CLI still writes the report and then exits `1` so it
   can gate CI.
+- **5** — `DEFAULT_TIMEOUT_MS` (120s) caps every command and is overridable per
+  call. Expiry kills the whole process tree, because the direct child is only a
+  shell and killing it alone leaves npm's node grandchildren running and still
+  holding their ports. The outcome is an ordinary failed result that says it
+  timed out. The tests pass explicit short timeouts rather than waiting out the
+  default, with a separate assertion that the default is finite and sane.
 - **10** — `core.runReview` branches on `format`, `jsonReport` sits beside
   `markdownReport`, the CLI rejects unknown `--format` values at parse time,
   and the output filename follows the format.
@@ -58,13 +64,33 @@ npx vitest run test/report.test.ts    # the original starter test
 ```
 
 Issues 1, 9 and 14 spawn the MCP server over stdio and are the slow ones
-(~60s budget each). Issue 5 deliberately waits on a command that
-self-terminates after 8s, so a failing run cannot leak a process.
+(~60s budget each). Issue 5's fixtures sleep 8s but are killed after 1s by an
+explicit timeout, so they cost about a second each and cannot leak a process.
 
 Two tests were tightened after their first run because they passed for the
 wrong reason: issue 9's RCE payload used nested double quotes that cmd.exe
 never executed, and issue 6's error assertion was satisfied by git's own stderr
 merely echoing the ref name.
+
+## Known limitations
+
+**Output is capped at 1 MiB (was issue 4).** `exec` buffers a command's output
+in memory, and `maxBuffer` defaults to 1 MiB. Originally filed as "any verbose
+test suite dies with `ERR_CHILD_PROCESS_STDIO_MAXBUFFER`" — measurement did not
+support that, and the issue was closed rather than fixed:
+
+- The crash is already gone. Fixing issue 2 made every `exec` error resolve as
+  a failed result, so an overflow no longer aborts the run, and the captured
+  1 MiB is preserved rather than discarded.
+- The threshold is far from realistic output. This repo's own `npm test`, with
+  27 failures and full diffs, produces ~125 KB — 12% of the limit.
+- What remains is a narrow misreport: a command exceeding 1 MiB is labelled
+  `failed` with `exitCode: null` even if it exited zero, which the CLI's exit
+  code then propagates. Verified at the boundary — 900 KB passes, 1.1 MB does
+  not.
+
+Accepted as an edge case. Fixing it means raising `maxBuffer` and labelling
+genuine overflow distinctly, or streaming into a bounded window.
 
 ## Not covered
 
