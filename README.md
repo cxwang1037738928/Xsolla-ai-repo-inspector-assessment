@@ -49,10 +49,16 @@ npm test
 
 ```bash
 npm run inspector -- review --repo ./path/to/repo --format markdown
+npm run inspector -- review --repo ./path/to/repo --format json
 npm run inspector -- review --repo ./path/to/repo --validate "npm test"
 ```
 
-The report is written to `review-report.md`.
+The report is written to `review-report.md`, or `review-report.json` when
+`--format json` is given. An unrecognised `--format` value is rejected.
+
+A validation command that exits non-zero is reported as a failed result — the
+report is still written — and the CLI then exits `1` so it can gate CI. A
+non-zero exit with no report file means the inspector itself failed.
 
 ## MCP
 

@@ -6,15 +6,29 @@ import { reviewRepository } from "./core.js";
 
 const server = new McpServer({ name: "repository-inspector", version: "2.0.0" });
 
+/**
+ * Declared once and passed to server.tool, so the handler's argument type is
+ * inferred from this shape. Annotating the handler parameter as `any` is what
+ * previously allowed the schema and the handler to disagree about a field name
+ * without any compile-time complaint.
+ */
+const reviewInput = {
+  repoPath: z.string().describe("Path to the repository root to inspect."),
+  baseRef: z
+    .string()
+    .optional()
+    .describe("Ref to diff against. Defaults to the repository's default branch."),
+  validationCommands: z
+    .array(z.string())
+    .optional()
+    .describe("Commands to run inside the repository, e.g. \"npm test\"."),
+};
+
 server.tool(
   "review_repository",
   "Inspects a Git repository and returns a review report.",
-  {
-    repo_path: z.string().describe("Repository path to inspect."),
-    baseRef: z.string().optional(),
-    validationCommands: z.array(z.string()).optional(),
-  },
-  async (input: any) => {
+  reviewInput,
+  async (input) => {
     const report = await reviewRepository({
       repositoryPath: input.repoPath,
       baseRef: input.baseRef,
